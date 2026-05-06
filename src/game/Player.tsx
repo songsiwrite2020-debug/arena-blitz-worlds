@@ -6,7 +6,7 @@ import { Weapon } from "./weapons";
 import { sfx } from "./sfx";
 
 interface Props {
-  onPositionChange: (pos: [number, number, number], rotY: number) => void;
+  onPositionChange: (pos: [number, number, number], rotY: number, walking: boolean) => void;
   onShoot: (origin: [number, number, number], dir: [number, number, number]) => void;
   obstacles: THREE.Box3[];
   arenaSize: number;
@@ -19,9 +19,14 @@ interface Props {
   zoomActive: boolean;
   setZoomActive: (b: boolean) => void;
   alive: boolean;
+  onAbility: (key: "Q" | "E") => void;
+  spawnPos?: [number, number, number];
+  respawnTick?: number;
+  dashTrigger?: { ts: number; strength: number } | null;
 }
 
 const SPEED = 8;
+const WALK_SPEED = 3.2;
 const JUMP = 7;
 const GRAVITY = 22;
 const PLAYER_HEIGHT = 1.7;
@@ -31,6 +36,7 @@ export const Player = ({
   onPositionChange, onShoot, obstacles, arenaSize,
   weapon, ammo, reloading, onReload, onSwitchWeapon, onScrollWeapon,
   zoomActive, setZoomActive, alive,
+  onAbility, spawnPos, respawnTick, dashTrigger,
 }: Props) => {
   const { camera, gl } = useThree();
   const velocity = useRef(new THREE.Vector3());
@@ -40,13 +46,28 @@ export const Player = ({
   const lastSent = useRef(0);
   const lastShot = useRef(0);
   const baseFov = useRef<number>(80);
+  const lastDashTs = useRef(0);
 
   useEffect(() => {
-    camera.position.set(0, PLAYER_HEIGHT, 5);
+    const p = spawnPos ?? [0, PLAYER_HEIGHT, 5];
+    camera.position.set(p[0], p[1], p[2]);
+    velocity.current.set(0, 0, 0);
     if ("fov" in camera) {
       baseFov.current = (camera as THREE.PerspectiveCamera).fov;
     }
-  }, [camera]);
+  }, [camera, spawnPos, respawnTick]);
+
+  // Apply external dash impulse
+  useEffect(() => {
+    if (!dashTrigger || dashTrigger.ts === lastDashTs.current) return;
+    lastDashTs.current = dashTrigger.ts;
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    dir.y = 0; dir.normalize();
+    velocity.current.x += dir.x * dashTrigger.strength;
+    velocity.current.z += dir.z * dashTrigger.strength;
+    velocity.current.y = 3;
+  }, [dashTrigger, camera]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
