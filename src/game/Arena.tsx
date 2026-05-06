@@ -150,6 +150,19 @@ export const Arena = ({ mapId }: { mapId: string }) => {
           <meshStandardMaterial color={o.color} metalness={0.4} roughness={0.5} />
         </mesh>
       ))}
+      {/* Bomb sites */}
+      {map.sites?.map((s) => (
+        <group key={s.name} position={[s.pos[0], 0.02, s.pos[1]]}>
+          <mesh rotation={[-Math.PI/2, 0, 0]}>
+            <ringGeometry args={[2.6, 3, 32]} />
+            <meshBasicMaterial color={map.accentColor} transparent opacity={0.7} />
+          </mesh>
+          <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, 0.05, 0]}>
+            <circleGeometry args={[2.6, 32]} />
+            <meshBasicMaterial color={map.accentColor} transparent opacity={0.08} />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 };
