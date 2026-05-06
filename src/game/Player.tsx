@@ -77,6 +77,8 @@ export const Player = ({
       if (e.code === "Digit1") onSwitchWeapon(0);
       if (e.code === "Digit2") onSwitchWeapon(1);
       if (e.code === "Digit3") onSwitchWeapon(2);
+      if (e.code === "KeyQ") onAbility("Q");
+      if (e.code === "KeyE") onAbility("E");
     };
     const up = (e: KeyboardEvent) => { keys.current[e.code] = false; };
     window.addEventListener("keydown", down);
@@ -109,7 +111,7 @@ export const Player = ({
       gl.domElement.removeEventListener("contextmenu", ctxMenu);
       gl.domElement.removeEventListener("wheel", wheel);
     };
-  }, [gl, onReload, onSwitchWeapon, onScrollWeapon, setZoomActive, weapon.zoom]);
+  }, [gl, onReload, onSwitchWeapon, onScrollWeapon, setZoomActive, weapon.zoom, onAbility]);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
