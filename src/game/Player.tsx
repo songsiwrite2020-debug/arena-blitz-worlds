@@ -125,6 +125,7 @@ export const Player = ({
       cam.updateProjectionMatrix();
     }
 
+    let walking = false;
     if (alive) {
       const forward = new THREE.Vector3();
       camera.getWorldDirection(forward);
@@ -136,7 +137,9 @@ export const Player = ({
       if (k["KeyS"]) move.sub(forward);
       if (k["KeyD"]) move.add(right);
       if (k["KeyA"]) move.sub(right);
-      const speed = zoomActive ? SPEED * 0.5 : SPEED;
+      walking = !!(k["ShiftLeft"] || k["ShiftRight"]);
+      const baseSpeed = walking ? WALK_SPEED : SPEED;
+      const speed = zoomActive ? baseSpeed * 0.55 : baseSpeed;
       if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed);
       velocity.current.x = move.x;
       velocity.current.z = move.z;
@@ -211,7 +214,8 @@ export const Player = ({
       lastSent.current = now;
       onPositionChange(
         [camera.position.x, camera.position.y, camera.position.z],
-        camera.rotation.y
+        camera.rotation.y,
+        walking,
       );
     }
   });
