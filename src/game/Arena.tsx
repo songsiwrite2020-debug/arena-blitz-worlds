@@ -6,6 +6,8 @@ export interface MapData {
   size: number;
   floorColor: string;
   accentColor: string;
+  sites?: { name: "A" | "B"; pos: [number, number] }[];
+  spawns?: { team: "attack" | "defense"; pos: [number, number, number] }[];
 }
 
 export const MAPS: Record<string, MapData> = {
@@ -57,6 +59,54 @@ export const MAPS: Record<string, MapData> = {
       { pos: [10, 3, 0], size: [3, 6, 3], color: "#1a1438" },
     ],
   },
+  "haven": {
+    size: 70,
+    floorColor: "#1a1408",
+    accentColor: "#ffaa33",
+    sites: [
+      { name: "A", pos: [-22, -18] },
+      { name: "B", pos: [22, 18] },
+    ],
+    spawns: [
+      { team: "attack", pos: [-30, 1.7, 30] },
+      { team: "attack", pos: [-26, 1.7, 30] },
+      { team: "attack", pos: [-22, 1.7, 30] },
+      { team: "attack", pos: [-18, 1.7, 30] },
+      { team: "attack", pos: [-14, 1.7, 30] },
+      { team: "defense", pos: [30, 1.7, -30] },
+      { team: "defense", pos: [26, 1.7, -30] },
+      { team: "defense", pos: [22, 1.7, -30] },
+      { team: "defense", pos: [18, 1.7, -30] },
+      { team: "defense", pos: [14, 1.7, -30] },
+    ],
+    obstacles: [
+      // Mid divider
+      { pos: [0, 1.5, 0], size: [3, 3, 14], color: "#3a2a14" },
+      { pos: [-6, 1, -2], size: [3, 2, 3], color: "#3a2a14" },
+      { pos: [6, 1, 2], size: [3, 2, 3], color: "#3a2a14" },
+      // A site (bottom-left)
+      { pos: [-22, 0.6, -18], size: [6, 1.2, 6], color: "#5c3a18" },
+      { pos: [-18, 1, -14], size: [2, 2, 2], color: "#3a2a14" },
+      { pos: [-26, 1.5, -22], size: [2, 3, 2], color: "#3a2a14" },
+      { pos: [-22, 1, -10], size: [4, 2, 1], color: "#3a2a14" },
+      { pos: [-30, 1, -18], size: [1, 2, 4], color: "#3a2a14" },
+      // B site (top-right)
+      { pos: [22, 0.6, 18], size: [6, 1.2, 6], color: "#5c3a18" },
+      { pos: [18, 1, 14], size: [2, 2, 2], color: "#3a2a14" },
+      { pos: [26, 1.5, 22], size: [2, 3, 2], color: "#3a2a14" },
+      { pos: [22, 1, 10], size: [4, 2, 1], color: "#3a2a14" },
+      { pos: [30, 1, 18], size: [1, 2, 4], color: "#3a2a14" },
+      // A long corridor walls
+      { pos: [-12, 2, -25], size: [10, 4, 0.5], color: "#2a1f10" },
+      { pos: [-12, 2, -10], size: [10, 4, 0.5], color: "#2a1f10" },
+      // B long corridor walls
+      { pos: [12, 2, 25], size: [10, 4, 0.5], color: "#2a1f10" },
+      { pos: [12, 2, 10], size: [10, 4, 0.5], color: "#2a1f10" },
+      // Mid pillars
+      { pos: [0, 2, -10], size: [1.5, 4, 1.5], color: "#3a2a14" },
+      { pos: [0, 2, 10], size: [1.5, 4, 1.5], color: "#3a2a14" },
+    ],
+  },
 };
 
 export const useArenaObstacles = (mapId: string) => {
@@ -99,6 +149,19 @@ export const Arena = ({ mapId }: { mapId: string }) => {
           <boxGeometry args={o.size} />
           <meshStandardMaterial color={o.color} metalness={0.4} roughness={0.5} />
         </mesh>
+      ))}
+      {/* Bomb sites */}
+      {map.sites?.map((s) => (
+        <group key={s.name} position={[s.pos[0], 0.02, s.pos[1]]}>
+          <mesh rotation={[-Math.PI/2, 0, 0]}>
+            <ringGeometry args={[2.6, 3, 32]} />
+            <meshBasicMaterial color={map.accentColor} transparent opacity={0.7} />
+          </mesh>
+          <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, 0.05, 0]}>
+            <circleGeometry args={[2.6, 32]} />
+            <meshBasicMaterial color={map.accentColor} transparent opacity={0.08} />
+          </mesh>
+        </group>
       ))}
     </group>
   );
