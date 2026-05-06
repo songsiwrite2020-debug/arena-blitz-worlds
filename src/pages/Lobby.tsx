@@ -29,6 +29,7 @@ export default function Lobby() {
   const maps = [
     { id: "arena-1", name: "Neon Grid", desc: "Open arena, neon walls", color: "primary" },
     { id: "arena-2", name: "Crimson Bunker", desc: "Tight cover, fast kills", color: "accent" },
+    { id: "arena-3", name: "Violet Citadel", desc: "Large map, sniper-friendly", color: "primary" },
   ];
 
   return (

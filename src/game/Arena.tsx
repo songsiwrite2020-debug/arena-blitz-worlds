@@ -39,6 +39,24 @@ export const MAPS: Record<string, MapData> = {
       { pos: [12, 1, 0], size: [2, 2, 8], color: "#3a1010" },
     ],
   },
+  "arena-3": {
+    size: 60,
+    floorColor: "#0a0a1f",
+    accentColor: "#aa66ff",
+    obstacles: [
+      { pos: [0, 2, 0], size: [6, 4, 6], color: "#1a1438" },
+      { pos: [-18, 1, -18], size: [4, 2, 4], color: "#1a1438" },
+      { pos: [18, 1, -18], size: [4, 2, 4], color: "#1a1438" },
+      { pos: [-18, 1, 18], size: [4, 2, 4], color: "#1a1438" },
+      { pos: [18, 1, 18], size: [4, 2, 4], color: "#1a1438" },
+      { pos: [-22, 0.5, 0], size: [2, 1, 12], color: "#1a1438" },
+      { pos: [22, 0.5, 0], size: [2, 1, 12], color: "#1a1438" },
+      { pos: [0, 0.5, -22], size: [12, 1, 2], color: "#1a1438" },
+      { pos: [0, 0.5, 22], size: [12, 1, 2], color: "#1a1438" },
+      { pos: [-10, 3, 0], size: [3, 6, 3], color: "#1a1438" },
+      { pos: [10, 3, 0], size: [3, 6, 3], color: "#1a1438" },
+    ],
+  },
 };
 
 export const useArenaObstacles = (mapId: string) => {
