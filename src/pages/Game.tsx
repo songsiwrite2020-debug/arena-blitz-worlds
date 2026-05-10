@@ -541,7 +541,7 @@ export default function Game() {
       }
       // Body sphere
       const bodyCenter = new THREE.Vector3(p.pos[0], p.pos[1] - 0.5, p.pos[2]);
-      const bodySphere = new THREE.Sphere(bodyCenter, PLAYER_RADIUS + 0.3);
+      const bodySphere = new THREE.Sphere(bodyCenter, PLAYER_RADIUS + 0.6);
       const bodyPt = new THREE.Vector3();
       if (ray.intersectSphere(bodySphere, bodyPt)) {
         const dist = o.distanceTo(bodyPt);
