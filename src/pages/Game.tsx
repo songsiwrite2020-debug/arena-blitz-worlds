@@ -531,17 +531,20 @@ export default function Game() {
     for (const [id, p] of Object.entries(remotesRef.current)) {
       // Skip teammates in team modes
       if (mode !== "ffa" && p.team && p.team === teamRef.current) continue;
-      // Head sphere
-      const headCenter = new THREE.Vector3(p.pos[0], p.pos[1] - PLAYER_RADIUS + HEAD_Y_OFFSET, p.pos[2]);
-      const headSphere = new THREE.Sphere(headCenter, HEAD_RADIUS);
+      // Use a single tall capsule-style hitbox: large sphere covering head+body
+      // centered at mid-body, generous radius to compensate for presence lag
+      const midY = p.pos[1] - 0.3; // halfway between feet and eye level
+      // Head (upper sphere)
+      const headCenter = new THREE.Vector3(p.pos[0], p.pos[1] + 0.1, p.pos[2]);
+      const headSphere = new THREE.Sphere(headCenter, 0.38);
       const headPt = new THREE.Vector3();
       if (ray.intersectSphere(headSphere, headPt)) {
         const dist = o.distanceTo(headPt);
-        if (dist < hitDist) { hitDist = dist; hitPoint = headPt; hitPlayerId = id; headshot = true; continue; }
+        if (dist < hitDist) { hitDist = dist; hitPoint = headPt; hitPlayerId = id; headshot = true; }
       }
-      // Body sphere
-      const bodyCenter = new THREE.Vector3(p.pos[0], p.pos[1] - 0.5, p.pos[2]);
-      const bodySphere = new THREE.Sphere(bodyCenter, PLAYER_RADIUS + 0.6);
+      // Body (lower sphere — generous radius for lag compensation)
+      const bodyCenter = new THREE.Vector3(p.pos[0], midY, p.pos[2]);
+      const bodySphere = new THREE.Sphere(bodyCenter, 1.1);
       const bodyPt = new THREE.Vector3();
       if (ray.intersectSphere(bodySphere, bodyPt)) {
         const dist = o.distanceTo(bodyPt);
