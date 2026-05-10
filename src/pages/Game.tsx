@@ -291,7 +291,18 @@ export default function Game() {
         if (!m) continue;
         sb[id] = { username: m.username, kills: m.kills ?? 0, team: m.team, agent: m.agent };
         if (id === clientId) continue;
-        next[id] = { id, username: m.username, pos: m.pos ?? [0,1.7,0], rotY: m.rotY ?? 0, hp: m.hp ?? 100, walking: m.walking, team: m.team, agent: m.agent };
+        // Preserve broadcast-updated position if we already have one — presence is throttled/stale
+        const existing = remotesRef.current[id];
+        next[id] = {
+          id,
+          username: m.username,
+          pos: existing?.pos ?? m.pos ?? [0,1.7,0],
+          rotY: existing?.rotY ?? m.rotY ?? 0,
+          hp: m.hp ?? 100,
+          walking: m.walking,
+          team: m.team,
+          agent: m.agent,
+        };
       }
       setRemotes(next);
       setScoreboard(sb);
@@ -299,8 +310,14 @@ export default function Game() {
 
     ch.on("presence", { event: "join" }, ({ key, newPresences }) => {
       if (key === clientId) return;
-      const p = (newPresences as Array<{ username?: string }>)[0];
-      if (p?.username) toast.success(`${p.username} joined the game`);
+      const p = (newPresences as Array<{ username?: string; pos?: [number,number,number]; rotY?: number; hp?: number; walking?: boolean; team?: Team; agent?: string }>)[0];
+      if (p?.username) {
+        toast.success(`${p.username} joined the game`);
+        setRemotes((prev) => ({
+          ...prev,
+          [key]: { id: key, username: p.username!, pos: p.pos ?? [0,1.7,0], rotY: p.rotY ?? 0, hp: p.hp ?? 100, walking: p.walking, team: p.team, agent: p.agent },
+        }));
+      }
     });
 
     ch.on("broadcast", { event: "shot" }, ({ payload }) => {
@@ -391,6 +408,10 @@ export default function Game() {
 
     ch.on("broadcast", { event: "pos" }, ({ payload }) => {
       if (payload.id === clientId) return;
+      // Update ref immediately so onShoot hit-detection uses fresh positions this frame
+      if (remotesRef.current[payload.id]) {
+        remotesRef.current[payload.id] = { ...remotesRef.current[payload.id], pos: payload.pos, rotY: payload.rotY };
+      }
       setRemotes((prev) => {
         if (!prev[payload.id]) return prev;
         return { ...prev, [payload.id]: { ...prev[payload.id], pos: payload.pos, rotY: payload.rotY } };
