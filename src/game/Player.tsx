@@ -77,6 +77,12 @@ export const Player = ({
       if (e.code === "Digit1") onSwitchWeapon(0);
       if (e.code === "Digit2") onSwitchWeapon(1);
       if (e.code === "Digit3") onSwitchWeapon(2);
+      if (e.code === "Digit4") onSwitchWeapon(3);
+      if (e.code === "Digit5") onSwitchWeapon(4);
+      if (e.code === "Digit6") onSwitchWeapon(5);
+      if (e.code === "Digit7") onSwitchWeapon(6);
+      if (e.code === "Digit8") onSwitchWeapon(7);
+      if (e.code === "Digit9") onSwitchWeapon(8);
       if (e.code === "KeyQ") onAbility("Q");
       if (e.code === "KeyE") onAbility("E");
     };

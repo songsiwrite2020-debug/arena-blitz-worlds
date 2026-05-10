@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from "react";
 import { useNavigate, useParams, useSearchParams, Navigate } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
+import { Environment } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,14 +11,17 @@ import { Player } from "@/game/Player";
 import { RemotePlayer, RemotePlayerData } from "@/game/RemotePlayer";
 import { Tracers, TracerData } from "@/game/Tracers";
 import { Viewmodel } from "@/game/Viewmodel";
-import { WEAPONS, WEAPON_ORDER, WeaponId } from "@/game/weapons";
+import { WEAPONS, WEAPON_ORDER, WeaponId, WEAPON_CATEGORIES } from "@/game/weapons";
 import { sfx } from "@/game/sfx";
 import { AGENTS } from "@/game/agents";
 import { AbilityEffects, AbilityEffect } from "@/game/AbilityEffects";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Crosshair, Heart, Skull, Trophy, X, Timer, Target, Shield, Zap } from "lucide-react";
+import { Crosshair, Heart, Skull, Trophy, X, Timer, Target, Shield, Zap, Link2 } from "lucide-react";
 import { toast } from "sonner";
+
+const MAP_CHAR: Record<string, string> = { haven: "H", "arena-1": "A", "arena-2": "B", "arena-3": "C" };
+const MODE_CHAR: Record<string, string> = { ffa: "F", "1v1": "D", "3v3": "T", "5v5": "V" };
 
 const PLAYER_RADIUS = 0.5;
 const HEAD_RADIUS = 0.28;
@@ -46,6 +51,9 @@ export default function Game() {
   const agentId = searchParams.get("agent") ?? "phantom";
   const agent = AGENTS[agentId] ?? AGENTS.phantom;
   const mode = searchParams.get("mode") ?? "ffa"; // ffa | 1v1 | 3v3 | 5v5
+  const roomCode = searchParams.get("room") ?? null;
+  // Per-tab random ID so two tabs with the same account can still see each other
+  const [clientId] = useState(() => Math.random().toString(36).slice(2, 10));
 
   const [remotes, setRemotes] = useState<Record<string, RemotePlayerData & { walking?: boolean; team?: Team; agent?: string }>>({});
   const [tracers, setTracers] = useState<TracerData[]>([]);
@@ -60,6 +68,8 @@ export default function Game() {
   const [reloading, setReloading] = useState(false);
   const [zoomActive, setZoomActive] = useState(false);
   const [lastShotAt, setLastShotAt] = useState(0);
+  const [hitActive, setHitActive] = useState(false);
+  const hitmarkerTimer = useRef<number | null>(null);
   const [matchStart] = useState(() => Date.now());
   const [now, setNow] = useState(Date.now());
   const [matchEnded, setMatchEnded] = useState(false);
@@ -72,6 +82,11 @@ export default function Game() {
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [dashTrigger, setDashTrigger] = useState<{ ts: number; strength: number } | null>(null);
   const [respawnTick, setRespawnTick] = useState(0);
+  const [credits, setCredits] = useState(800);
+  const [ownedWeapons, setOwnedWeapons] = useState<WeaponId[]>(["pistol", "knife"]);
+  const [connected, setConnected] = useState(false);
+  const [buyMenuOpen, setBuyMenuOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [team] = useState<Team>(() => {
     if (mode === "ffa") return "attack";
     // simple: assign by hash of user id later — start as attack, will rebalance
@@ -87,10 +102,26 @@ export default function Game() {
   const killsRef = useRef(0);
   const reloadTimer = useRef<number | null>(null);
   const teamRef = useRef<Team>(team);
+  const intentionalCloseRef = useRef(false);
 
   useEffect(() => { remotesRef.current = remotes; }, [remotes]);
   useEffect(() => { meRef.current.hp = hp; }, [hp]);
   useEffect(() => { killsRef.current = kills; }, [kills]);
+
+  // Re-broadcast HP/kills via presence whenever they change so other players see updates immediately
+  useEffect(() => {
+    if (!channelRef.current || !username) return;
+    channelRef.current.track({
+      username,
+      pos: meRef.current.pos,
+      rotY: meRef.current.rotY,
+      hp,
+      kills,
+      walking: meRef.current.walking,
+      team: teamRef.current,
+      agent: agentId,
+    });
+  }, [hp, kills, username, agentId]);
 
   // Determine spawn from team if map has spawns
   const spawnPos = useMemo<[number, number, number]>(() => {
@@ -101,6 +132,9 @@ export default function Game() {
     }
     return [Math.random() * 10 - 5, 1.7, Math.random() * 10 - 5];
   }, [map, respawnTick]);
+
+  // Keep meRef in sync with spawn so the initial presence track has the right position
+  useEffect(() => { meRef.current.pos = spawnPos; }, [spawnPos]);
 
   // Match timer
   useEffect(() => {
@@ -126,7 +160,8 @@ export default function Game() {
   }, []);
 
   const switchTo = useCallback((idx: number) => {
-    const id = WEAPON_ORDER[((idx % WEAPON_ORDER.length) + WEAPON_ORDER.length) % WEAPON_ORDER.length];
+    const ord = ownedWeapons;
+    const id = ord[((idx % ord.length) + ord.length) % ord.length];
     setWeaponId((cur) => {
       if (cur === id) return cur;
       sfx.switchWeapon();
@@ -135,15 +170,15 @@ export default function Game() {
       if (reloadTimer.current) { clearTimeout(reloadTimer.current); reloadTimer.current = null; }
       return id;
     });
-  }, []);
+  }, [ownedWeapons]);
 
   const onScrollWeapon = useCallback((delta: number) => {
-    const cur = WEAPON_ORDER.indexOf(weaponId);
+    const cur = ownedWeapons.indexOf(weaponId);
     switchTo(cur + delta);
-  }, [weaponId, switchTo]);
+  }, [weaponId, ownedWeapons, switchTo]);
 
   const doReload = useCallback(() => {
-    if (reloading || ammo === weapon.ammo) return;
+    if (weapon.melee || reloading || ammo === weapon.ammo) return;
     sfx.reload();
     setReloading(true);
     reloadTimer.current = window.setTimeout(() => {
@@ -152,6 +187,25 @@ export default function Game() {
       reloadTimer.current = null;
     }, weapon.reloadMs);
   }, [reloading, ammo, weapon]);
+
+  const buyWeapon = useCallback((id: WeaponId) => {
+    if (ownedWeapons.includes(id)) {
+      switchTo(ownedWeapons.indexOf(id));
+      setBuyMenuOpen(false);
+      return;
+    }
+    const w = WEAPONS[id];
+    if (credits < w.price) { toast.error(`Need $${w.price - credits} more`); return; }
+    setCredits((c) => c - w.price);
+    setOwnedWeapons((arr) => [...arr, id]);
+    sfx.switchWeapon();
+    setWeaponId(id);
+    setAmmo(w.ammo);
+    setReloading(false);
+    if (reloadTimer.current) { clearTimeout(reloadTimer.current); reloadTimer.current = null; }
+    toast.success(`Bought ${w.name}`);
+    setBuyMenuOpen(false);
+  }, [credits, ownedWeapons, switchTo]);
 
   // Cleanup expired effects
   useEffect(() => {
@@ -165,12 +219,12 @@ export default function Game() {
     if (!alive) return;
     const ab = key === "Q" ? agent.q : agent.e;
     const cdEnd = key === "Q" ? qCdEnd : eCdEnd;
-    if (performance.now() < cdEnd) {
+    if (Date.now() < cdEnd) {
       toast.error(`${ab.name} on cooldown`, { duration: 600 });
       return;
     }
     const setCd = key === "Q" ? setQCdEnd : setECdEnd;
-    setCd(performance.now() + ab.cooldownMs);
+    setCd(Date.now() + ab.cooldownMs);
 
     const pos = meRef.current.pos;
     const rotY = meRef.current.rotY;
@@ -197,7 +251,7 @@ export default function Game() {
       // self
       const dx = center.x - pos[0], dz = center.z - pos[2];
       if (dx * dx + dz * dz < FLASH_RADIUS * FLASH_RADIUS) {
-        setFlashUntil(performance.now() + ab.durationMs);
+        setFlashUntil(Date.now() + ab.durationMs);
       }
       const fx: AbilityEffect = { id, kind: "flash", pos: target, color: ab.color, startTime: performance.now(), duration: 200, ownerId: user!.id };
       channelRef.current?.send({ type: "broadcast", event: "flash", payload: { center: target, duration: ab.durationMs, ownerId: user!.id } });
@@ -214,7 +268,7 @@ export default function Game() {
         if (ddx * ddx + ddz * ddz < RECON_RADIUS * RECON_RADIUS) reveal.add(rid);
       }
       setRevealedIds(reveal);
-      setReconUntil(performance.now() + ab.durationMs);
+      setReconUntil(Date.now() + ab.durationMs);
     }
     addFeed(`✨ ${username} used ${ab.name}`);
   }, [alive, agent, qCdEnd, eCdEnd, user, username, addFeed]);
@@ -223,8 +277,8 @@ export default function Game() {
   useEffect(() => {
     if (!user || !username) return;
 
-    const ch = supabase.channel(`game:${mapId}:${mode}`, {
-      config: { presence: { key: user.id }, broadcast: { self: false } },
+    const ch = supabase.channel(roomCode ? `game:${mapId}:${mode}:${roomCode}` : `game:${mapId}:${mode}`, {
+      config: { presence: { key: clientId }, broadcast: { self: false } },
     });
     channelRef.current = ch;
 
@@ -236,11 +290,17 @@ export default function Game() {
         const m = metas[0];
         if (!m) continue;
         sb[id] = { username: m.username, kills: m.kills ?? 0, team: m.team, agent: m.agent };
-        if (id === user.id) continue;
-        next[id] = { id, username: m.username, pos: m.pos, rotY: m.rotY, hp: m.hp, walking: m.walking, team: m.team, agent: m.agent };
+        if (id === clientId) continue;
+        next[id] = { id, username: m.username, pos: m.pos ?? [0,1.7,0], rotY: m.rotY ?? 0, hp: m.hp ?? 100, walking: m.walking, team: m.team, agent: m.agent };
       }
       setRemotes(next);
       setScoreboard(sb);
+    });
+
+    ch.on("presence", { event: "join" }, ({ key, newPresences }) => {
+      if (key === clientId) return;
+      const p = (newPresences as Array<{ username?: string }>)[0];
+      if (p?.username) toast.success(`${p.username} joined the game`);
     });
 
     ch.on("broadcast", { event: "shot" }, ({ payload }) => {
@@ -255,11 +315,10 @@ export default function Game() {
     });
 
     ch.on("broadcast", { event: "hit" }, ({ payload }) => {
-      if (payload.targetId !== user.id) return;
+      if (payload.targetId !== clientId) return;
       const dmg = payload.damage;
       // Shield first
       let remaining = dmg;
-      let nextShield = meRef.current.hp >= 0 ? Math.max(0, /* placeholder */ 0) : 0;
       // Use functional updates
       setShield((s) => {
         const absorb = Math.min(s, remaining);
@@ -313,13 +372,28 @@ export default function Game() {
           const pt = new THREE.Vector3();
           if (ray.intersectBox(b, pt) && my.distanceTo(pt) < my.distanceTo(center)) { blocked = true; break; }
         }
-        if (!blocked) setFlashUntil(performance.now() + payload.duration);
+        if (!blocked) setFlashUntil(Date.now() + payload.duration);
       }
       setEffects((arr) => [...arr, { id: Math.random().toString(36), kind: "flash", pos: payload.center, color: "#ffffff", startTime: performance.now(), duration: 200, ownerId: payload.ownerId }]);
     });
 
+    ch.on("broadcast", { event: "recon" }, ({ payload }) => {
+      setEffects((arr) => [...arr, {
+        id: Math.random().toString(36),
+        kind: "recon",
+        pos: payload.center,
+        color: "#7df9ff",
+        startTime: performance.now(),
+        duration: 600,
+        ownerId: payload.ownerId,
+      }]);
+    });
+
+    intentionalCloseRef.current = false;
+
     ch.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
+        setConnected(true);
         await ch.track({
           username,
           pos: meRef.current.pos,
@@ -330,14 +404,17 @@ export default function Game() {
           team: teamRef.current,
           agent: agent.id,
         });
+      } else if (!intentionalCloseRef.current) {
+        setConnected(false);
       }
     });
 
     return () => {
+      intentionalCloseRef.current = true;
       supabase.removeChannel(ch);
       channelRef.current = null;
     };
-  }, [user, username, mapId, mode, addFeed, weaponId, obstacles, agent.id]);
+  }, [user, username, mapId, mode, roomCode, clientId, addFeed, obstacles, agent.id]);
 
   useEffect(() => {
     const onChange = () => setPointerLocked(!!document.pointerLockElement);
@@ -348,9 +425,36 @@ export default function Game() {
   // Clear recon reveal when expired
   useEffect(() => {
     if (reconUntil === 0) return;
-    const t = setTimeout(() => { setRevealedIds(new Set()); setReconUntil(0); }, Math.max(0, reconUntil - performance.now()));
+    const t = setTimeout(() => { setRevealedIds(new Set()); setReconUntil(0); }, Math.max(0, reconUntil - Date.now()));
     return () => clearTimeout(t);
   }, [reconUntil]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "KeyB") {
+        setBuyMenuOpen((o) => {
+          const opening = !o;
+          if (opening) document.exitPointerLock?.();
+          else document.querySelector("canvas")?.requestPointerLock();
+          return opening;
+        });
+      }
+      if (e.code === "AltLeft" || e.code === "AltRight") {
+        e.preventDefault();
+        setInviteOpen((o) => {
+          const opening = !o;
+          if (opening) document.exitPointerLock?.();
+          else document.querySelector("canvas")?.requestPointerLock();
+          return opening;
+        });
+      }
+      if (e.code === "Escape") {
+        setInviteOpen((o) => { if (o) document.querySelector("canvas")?.requestPointerLock(); return false; });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const onPositionChange = useCallback((pos: [number, number, number], rotY: number, walking: boolean) => {
     meRef.current.pos = pos;
@@ -371,11 +475,6 @@ export default function Game() {
         const pt = new THREE.Vector3();
         if (ray.intersectSphere(sphere, pt) && origin.distanceTo(pt) < distToEnd) return true;
       } else if (e.kind === "wall") {
-        // approximate as box
-        const box = new THREE.Box3(
-          new THREE.Vector3(e.pos[0] - 3, e.pos[1] - 1.25, e.pos[2] - 0.2),
-          new THREE.Vector3(e.pos[0] + 3, e.pos[1] + 1.25, e.pos[2] + 0.2),
-        );
         // rotate test approximated by sphere of radius 3 at center for blocking
         const sphere = new THREE.Sphere(new THREE.Vector3(...e.pos), 3);
         const pt = new THREE.Vector3();
@@ -391,13 +490,16 @@ export default function Game() {
       return;
     }
 
-    setAmmo((a) => {
-      const na = a - 1;
-      if (na <= 0) doReload();
-      return na;
-    });
+    if (!weapon.melee) {
+      setAmmo((a) => {
+        const na = a - 1;
+        if (na <= 0) doReload();
+        return na;
+      });
+    }
     setLastShotAt(performance.now());
-    sfx.shot(weaponId);
+    if (weapon.melee) sfx.knife();
+    else sfx.shot(weaponId);
 
     const o = new THREE.Vector3(...origin);
     const d = new THREE.Vector3(...dir).normalize();
@@ -453,16 +555,21 @@ export default function Game() {
     }
 
     const end: [number, number, number] = [hitPoint.x, hitPoint.y, hitPoint.z];
-    setTracers((arr) => [...arr, {
-      id: Math.random().toString(36),
-      origin, end, startTime: performance.now(),
-    }]);
-    channelRef.current?.send({ type: "broadcast", event: "shot", payload: { origin, end, weapon: weaponId } });
+    if (!weapon.melee) {
+      setTracers((arr) => [...arr, {
+        id: Math.random().toString(36),
+        origin, end, startTime: performance.now(),
+      }]);
+      channelRef.current?.send({ type: "broadcast", event: "shot", payload: { origin, end, weapon: weaponId } });
+    }
 
     if (hitPlayerId && user && username) {
       const target = remotesRef.current[hitPlayerId];
       const dmg = Math.round(weapon.damage * (headshot ? HEADSHOT_MULT : 1));
       sfx.hit();
+      if (hitmarkerTimer.current) clearTimeout(hitmarkerTimer.current);
+      setHitActive(true);
+      hitmarkerTimer.current = window.setTimeout(() => setHitActive(false), 150);
       channelRef.current?.send({
         type: "broadcast", event: "hit",
         payload: { targetId: hitPlayerId, damage: dmg, shooterName: username, shooterId: user.id, headshot },
@@ -473,6 +580,7 @@ export default function Game() {
           supabase.from("profiles").update({ kills: nk }).eq("id", user.id).then(() => {});
           return nk;
         });
+        setCredits((c) => c + weapon.killReward);
         sfx.kill();
         addFeed(`${headshot ? "🎯" : "☠️"} YOU → ${target.username}${headshot ? " (HS)" : ""}`);
         channelRef.current?.send({
@@ -519,12 +627,17 @@ export default function Game() {
 
   return (
     <main className="fixed inset-0 bg-black overflow-hidden">
-      <Canvas shadows camera={{ fov: 80, near: 0.1, far: 300 }}>
+      <Canvas shadows dpr={[1, 2]} camera={{ fov: 80, near: 0.1, far: 300 }} gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}>
         <color attach="background" args={[map.floorColor]} />
-        <fog attach="fog" args={[map.floorColor, 30, 110]} />
-        <ambientLight intensity={0.4} />
-        <directionalLight position={[15, 25, 10]} intensity={1.4} castShadow shadow-mapSize={[2048, 2048]} />
-        <pointLight position={[0, 10, 0]} intensity={1.2} color={map.accentColor} distance={50} />
+        <fog attach="fog" args={[map.floorColor, 45, 120]} />
+        <Suspense fallback={null}><Environment preset="city" background={false} /></Suspense>
+        <ambientLight intensity={0.22} />
+        <hemisphereLight args={["#0d1a30", "#050810", 0.55]} />
+        <directionalLight position={[15, 25, 10]} intensity={1.2} castShadow shadow-mapSize={[2048, 2048]} />
+        <pointLight position={[-map.size * 0.4, 6, -map.size * 0.4]} intensity={2.4} color={map.accentColor} distance={40} decay={2} />
+        <pointLight position={[ map.size * 0.4, 6,  map.size * 0.4]} intensity={2.4} color={map.accentColor} distance={40} decay={2} />
+        <pointLight position={[ map.size * 0.4, 6, -map.size * 0.4]} intensity={1.4} color="#99bbff" distance={35} decay={2} />
+        <pointLight position={[-map.size * 0.4, 6,  map.size * 0.4]} intensity={1.4} color="#99bbff" distance={35} decay={2} />
         <Arena mapId={mapId} />
         <Player
           onPositionChange={onPositionChange}
@@ -551,6 +664,10 @@ export default function Game() {
         <Tracers tracers={tracers} onExpire={expireTracer} />
         <AbilityEffects effects={effects} onExpire={expireEffect} />
         {!zoomActive && <Viewmodel weapon={weapon} fireFlash={lastShotAt} />}
+        <EffectComposer>
+          <Bloom luminanceThreshold={0.22} luminanceSmoothing={0.85} intensity={1.6} height={300} />
+          <Vignette offset={0.28} darkness={0.62} />
+        </EffectComposer>
       </Canvas>
 
       <div className="pointer-events-none absolute inset-0">
@@ -559,11 +676,17 @@ export default function Game() {
           <div className="absolute inset-0 bg-white" style={{ opacity: flashIntensity }} />
         )}
 
-        {/* Crosshair */}
+        {/* Crosshair + hitmarker */}
         {!zoomActive && (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
             <div className="w-1 h-1 bg-primary rounded-full shadow-[0_0_6px_hsl(var(--primary))]" />
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 border border-primary/60 rounded-full" />
+            {hitActive && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 pointer-events-none">
+                <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-400 -translate-y-1/2 rotate-45" />
+                <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-400 -translate-y-1/2 -rotate-45" />
+              </div>
+            )}
           </div>
         )}
         {/* Scope overlay */}
@@ -594,6 +717,7 @@ export default function Game() {
           <div className="flex items-center gap-1 text-primary"><Skull className="w-4 h-4" /><span className="font-bold tabular-nums">{kills}</span></div>
           <div className="flex items-center gap-1 text-destructive"><X className="w-4 h-4" /><span className="font-bold tabular-nums">{deaths}</span></div>
           <div className="flex items-center gap-1 text-accent"><Timer className="w-4 h-4" /><span className="font-bold tabular-nums">{timeStr}</span></div>
+          <div className="flex items-center gap-1 text-yellow-400"><span className="text-xs font-black">$</span><span className="font-bold tabular-nums">{credits}</span></div>
         </div>
 
         {/* HP / Shield */}
@@ -646,10 +770,11 @@ export default function Game() {
         <div className="absolute bottom-6 right-6 w-64 text-right">
           <div className="text-xs uppercase tracking-widest text-muted-foreground">{weapon.name}</div>
           <div className="text-3xl font-black tabular-nums" style={{ color: weapon.color }}>
-            {reloading ? "..." : ammo}<span className="text-base text-muted-foreground">/{weapon.ammo}</span>
+            {weapon.melee ? "∞" : reloading ? "..." : ammo}
+            {!weapon.melee && <span className="text-base text-muted-foreground">/{weapon.ammo}</span>}
           </div>
           <div className="flex justify-end gap-2 mt-2">
-            {WEAPON_ORDER.map((id, i) => (
+            {ownedWeapons.map((id, i) => (
               <button
                 key={id}
                 onClick={() => switchTo(i)}
@@ -672,23 +797,131 @@ export default function Game() {
           ))}
         </div>
 
+        {/* Connection status */}
+        <div className="absolute bottom-4 right-4 text-[10px] select-none pointer-events-none text-right">
+          <div className="flex items-center justify-end gap-1.5 mb-0.5">
+            <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400 shadow-[0_0_6px_#4ade80]" : "bg-red-500 animate-pulse"}`} />
+            <span className={connected ? "text-green-400/70" : "text-red-400/80"}>
+              {connected ? `ONLINE · ${Object.keys(remotes).length + 1} player${Object.keys(remotes).length !== 0 ? "s" : ""}` : "CONNECTING…"}
+            </span>
+          </div>
+          <div className="text-white/25 font-mono">{roomCode ? `room:${roomCode}` : `${mapId}/${mode}`}</div>
+        </div>
+
         {/* Live scoreboard + agent */}
         <div className="absolute top-20 left-6 bg-card/70 backdrop-blur px-3 py-2 rounded border border-border min-w-[200px]">
           <div className="text-xs uppercase tracking-widest mb-1 flex items-center gap-1" style={{ color: agent.color }}>
             <Target className="w-3 h-3" /> {agent.name} · {agent.role}
           </div>
           {sortedScoreboard.map((p, i) => (
-            <div key={p.id} className={`flex justify-between text-xs ${p.id === user.id ? "text-primary font-bold" : ""}`}>
+            <div key={p.id} className={`flex justify-between text-xs ${p.id === clientId ? "text-primary font-bold" : ""}`}>
               <span className="truncate max-w-[120px]">#{i+1} {p.username}</span>
               <span className="tabular-nums">{p.kills}</span>
             </div>
           ))}
         </div>
 
-        <Button variant="ghost" size="sm" className="pointer-events-auto absolute top-4 right-4" onClick={() => navigate("/lobby")}>
-          <X className="mr-1 w-4 h-4" /> Leave
-        </Button>
+        <div className="pointer-events-auto absolute top-4 right-4 flex gap-2">
+          <Button variant="ghost" size="sm" onClick={() => {
+            const gameNext = roomCode
+              ? `/play/${mapId}?mode=${mode}&room=${roomCode}`
+              : `/play/${mapId}?mode=${mode}`;
+            const url = `${window.location.origin}/auth?next=${encodeURIComponent(gameNext)}`;
+            navigator.clipboard.writeText(url);
+            toast.success("Invite link copied! Friends will join your game directly.");
+          }}>
+            <Link2 className="mr-1 w-4 h-4" /> Invite
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => navigate("/lobby")}>
+            <X className="mr-1 w-4 h-4" /> Leave
+          </Button>
+        </div>
       </div>
+
+      {/* Buy menu */}
+      {buyMenuOpen && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur z-20">
+          <Card className="p-6 max-w-2xl w-full border-primary/40">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-black tracking-widest">BUY MENU</h2>
+              <div className="flex items-center gap-3">
+                <span className="text-yellow-400 font-bold text-lg">${credits}</span>
+                <Button size="sm" variant="ghost" onClick={() => { setBuyMenuOpen(false); document.querySelector("canvas")?.requestPointerLock(); }}><X className="w-4 h-4" /></Button>
+              </div>
+            </div>
+            {WEAPON_CATEGORIES.map((cat) => {
+              const catWeapons = WEAPON_ORDER.filter((id) => WEAPONS[id].category === cat.id);
+              if (catWeapons.length === 0) return null;
+              return (
+                <div key={cat.id} className="mb-3">
+                  <div className="text-[10px] uppercase tracking-widest mb-1.5 font-bold" style={{ color: cat.color }}>{cat.label}</div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {catWeapons.map((id) => {
+                      const w = WEAPONS[id];
+                      const owned = ownedWeapons.includes(id);
+                      const active = weaponId === id;
+                      const canAfford = credits >= w.price;
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => buyWeapon(id)}
+                          disabled={!owned && !canAfford}
+                          className={`p-2 rounded border text-left transition-colors ${
+                            active ? "border-primary bg-primary/20" :
+                            owned ? "border-primary/40 bg-primary/5 hover:bg-primary/10" :
+                            canAfford ? "border-border bg-card/60 hover:border-accent/60" :
+                            "border-border/20 bg-card/20 opacity-40 cursor-not-allowed"
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold truncate" style={{ color: w.color }}>{w.name}</div>
+                          <div className="text-[9px] text-muted-foreground">{w.damage}dmg · {w.ammo}rnd</div>
+                          <div className="text-[10px] font-bold mt-0.5" style={{ color: owned ? "#44ff88" : canAfford ? "#ffaa33" : "#555" }}>
+                            {owned ? (active ? "ACTIVE" : "OWNED") : `$${w.price}`}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            <p className="text-[10px] text-muted-foreground mt-3 text-center">Press B to close</p>
+          </Card>
+        </div>
+      )}
+
+      {/* Invite modal */}
+      {inviteOpen && (() => {
+        const gameNext = roomCode
+          ? `/play/${mapId}?mode=${mode}&room=${roomCode}`
+          : `/play/${mapId}?mode=${mode}`;
+        const inviteUrl = `${window.location.origin}/auth?next=${encodeURIComponent(gameNext)}`;
+        const close = () => { setInviteOpen(false); document.querySelector("canvas")?.requestPointerLock(); };
+        return (
+          <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur z-20">
+            <Card className="p-6 w-full max-w-md border-primary/40">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-black tracking-widest flex items-center gap-2"><Link2 className="w-5 h-5 text-primary" /> INVITE FRIENDS</h2>
+                <Button size="sm" variant="ghost" onClick={close}><X className="w-4 h-4" /></Button>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">Share this link — friends click it, pick a name, and join your game instantly.</p>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={inviteUrl}
+                  className="flex-1 bg-secondary/60 border border-border rounded px-3 py-2 text-xs font-mono truncate text-foreground"
+                  onFocus={(e) => e.target.select()}
+                />
+                <Button size="sm" onClick={() => { navigator.clipboard.writeText(inviteUrl); toast.success("Copied!"); }}>
+                  Copy
+                </Button>
+              </div>
+              {roomCode && <p className="text-[10px] text-muted-foreground mt-2 text-center">Room code: <span className="font-mono font-bold text-primary">{roomCode}</span></p>}
+              <p className="text-[10px] text-muted-foreground mt-3 text-center">Press <kbd className="bg-secondary px-1 rounded">Alt</kbd> or <kbd className="bg-secondary px-1 rounded">Esc</kbd> to close</p>
+            </Card>
+          </div>
+        );
+      })()}
 
       {/* Death overlay */}
       {!alive && !matchEnded && (
@@ -711,8 +944,8 @@ export default function Game() {
               {sortedScoreboard.map((p, i) => (
                 <div key={p.id} className={`flex justify-between p-2 rounded ${
                   i === 0 ? "bg-accent/20 text-accent" : "bg-secondary/40"
-                } ${p.id === user.id ? "ring-1 ring-primary" : ""}`}>
-                  <span className="font-bold">#{i+1} {p.username}{p.id === user.id ? " (YOU)" : ""}</span>
+                } ${p.id === clientId ? "ring-1 ring-primary" : ""}`}>
+                  <span className="font-bold">#{i+1} {p.username}{p.id === clientId ? " (YOU)" : ""}</span>
                   <span className="font-bold tabular-nums">{p.kills} K</span>
                 </div>
               ))}
@@ -737,7 +970,7 @@ export default function Game() {
               <strong className="text-foreground">WASD</strong> move · <strong className="text-foreground">SHIFT</strong> walk silent · <strong className="text-foreground">SPACE</strong> jump<br/>
               <strong className="text-foreground">LMB</strong> shoot · <strong className="text-foreground">RMB</strong> aim · <strong className="text-foreground">R</strong> reload<br/>
               <strong className="text-foreground">Q</strong> {agent.q.name} · <strong className="text-foreground">E</strong> {agent.e.name}<br/>
-              <strong className="text-foreground">1/2/3</strong> swap weapon
+              <strong className="text-foreground">1–9</strong> swap weapon · <strong className="text-foreground">B</strong> buy
             </p>
             <Button size="lg" className="w-full font-bold tracking-widest uppercase" onClick={() => {
               const canvas = document.querySelector("canvas");

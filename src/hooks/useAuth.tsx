@@ -25,7 +25,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (s?.user) {
         setTimeout(async () => {
           const { data } = await supabase.from("profiles").select("username").eq("id", s.user.id).maybeSingle();
-          setUsername(data?.username ?? null);
+          setUsername(data?.username ?? s.user.user_metadata?.username ?? null);
         }, 0);
       } else {
         setUsername(null);
@@ -38,7 +38,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setLoading(false);
       if (s?.user) {
         supabase.from("profiles").select("username").eq("id", s.user.id).maybeSingle()
-          .then(({ data }) => setUsername(data?.username ?? null));
+          .then(({ data }) => setUsername(data?.username ?? s.user.user_metadata?.username ?? null));
       }
     });
 
