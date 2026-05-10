@@ -389,6 +389,14 @@ export default function Game() {
       }]);
     });
 
+    ch.on("broadcast", { event: "pos" }, ({ payload }) => {
+      if (payload.id === clientId) return;
+      setRemotes((prev) => {
+        if (!prev[payload.id]) return prev;
+        return { ...prev, [payload.id]: { ...prev[payload.id], pos: payload.pos, rotY: payload.rotY } };
+      });
+    });
+
     intentionalCloseRef.current = false;
 
     ch.subscribe(async (status) => {
@@ -464,7 +472,12 @@ export default function Game() {
       username, pos, rotY, hp: meRef.current.hp, kills: killsRef.current,
       walking, team: teamRef.current, agent: agent.id,
     });
-  }, [username, agent.id]);
+    channelRef.current?.send({
+      type: "broadcast",
+      event: "pos",
+      payload: { id: clientId, pos, rotY },
+    });
+  }, [username, agent.id, clientId]);
 
   const isBlockedBySmokeOrWall = useCallback((origin: THREE.Vector3, end: THREE.Vector3) => {
     const ray = new THREE.Ray(origin, end.clone().sub(origin).normalize());
