@@ -51,10 +51,7 @@ export default function Game() {
   const agentId = searchParams.get("agent") ?? "phantom";
   const agent = AGENTS[agentId] ?? AGENTS.phantom;
   const mode = searchParams.get("mode") ?? "ffa"; // ffa | 1v1 | 3v3 | 5v5
-  const roomCodeParam = searchParams.get("room");
-  // Always use a room code — auto-generate one if the URL didn't include one.
-  // This guarantees friends who click the invite link land in the exact same channel.
-  const [roomCode] = useState(() => roomCodeParam ?? Math.random().toString(36).slice(2, 8).toUpperCase());
+  const roomCode = searchParams.get("room"); // null = public channel; set = private room
   // Per-tab random ID so two tabs with the same account can still see each other
   const [clientId] = useState(() => Math.random().toString(36).slice(2, 10));
 
@@ -139,15 +136,6 @@ export default function Game() {
   // Keep meRef in sync with spawn so the initial presence track has the right position
   useEffect(() => { meRef.current.pos = spawnPos; }, [spawnPos]);
 
-  // Silently put the room code in the URL so the address bar is shareable
-  useEffect(() => {
-    if (!roomCodeParam) {
-      const url = new URL(window.location.href);
-      url.searchParams.set("room", roomCode);
-      window.history.replaceState(null, "", url.toString());
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Match timer
   useEffect(() => {
@@ -290,7 +278,7 @@ export default function Game() {
   useEffect(() => {
     if (!user || !username) return;
 
-    const ch = supabase.channel(`game:${mapId}:${mode}:${roomCode}`, {
+    const ch = supabase.channel(roomCode ? `game:${mapId}:${mode}:${roomCode}` : `game:${mapId}:${mode}`, {
       config: { presence: { key: clientId }, broadcast: { self: false } },
     });
     channelRef.current = ch;
@@ -665,7 +653,7 @@ export default function Game() {
   }, [scoreboard]);
 
   if (loading) return null;
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to={`/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`} replace />;
 
   const minutes = Math.floor(remaining / 60000);
   const seconds = Math.floor((remaining % 60000) / 1000);
@@ -855,7 +843,7 @@ export default function Game() {
               {connected ? `ONLINE · ${Object.keys(remotes).length + 1} player${Object.keys(remotes).length !== 0 ? "s" : ""}` : "CONNECTING…"}
             </span>
           </div>
-          <div className="text-white/25 font-mono">room:{roomCode}</div>
+          <div className="text-white/25 font-mono">{roomCode ? `room:${roomCode}` : `${mapId}/${mode}`}</div>
         </div>
 
         {/* Live scoreboard + agent */}
@@ -873,7 +861,10 @@ export default function Game() {
 
         <div className="pointer-events-auto absolute top-4 right-4 flex gap-2">
           <Button variant="ghost" size="sm" onClick={() => {
-            const url = `${window.location.origin}/auth?next=${encodeURIComponent(`/play/${mapId}?mode=${mode}&room=${roomCode}`)}`;
+            const gameUrl = roomCode
+              ? `/play/${mapId}?mode=${mode}&room=${roomCode}`
+              : `/play/${mapId}?mode=${mode}`;
+            const url = `${window.location.origin}/auth?next=${encodeURIComponent(gameUrl)}`;
             navigator.clipboard.writeText(url);
             toast.success("Invite link copied! Friends will join your game directly.");
           }}>
@@ -939,7 +930,10 @@ export default function Game() {
 
       {/* Invite modal */}
       {inviteOpen && (() => {
-        const inviteUrl = `${window.location.origin}/auth?next=${encodeURIComponent(`/play/${mapId}?mode=${mode}&room=${roomCode}`)}`;
+        const gameUrl = roomCode
+          ? `/play/${mapId}?mode=${mode}&room=${roomCode}`
+          : `/play/${mapId}?mode=${mode}`;
+        const inviteUrl = `${window.location.origin}/auth?next=${encodeURIComponent(gameUrl)}`;
         const close = () => { setInviteOpen(false); document.querySelector("canvas")?.requestPointerLock(); };
         return (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur z-20">
@@ -960,7 +954,7 @@ export default function Game() {
                   Copy
                 </Button>
               </div>
-              <p className="text-[10px] text-muted-foreground mt-2 text-center">Room code: <span className="font-mono font-bold text-primary">{roomCode}</span></p>
+              {roomCode && <p className="text-[10px] text-muted-foreground mt-2 text-center">Private room: <span className="font-mono font-bold text-primary">{roomCode}</span></p>}
               <p className="text-[10px] text-muted-foreground mt-3 text-center">Press <kbd className="bg-secondary px-1 rounded">Alt</kbd> or <kbd className="bg-secondary px-1 rounded">Esc</kbd> to close</p>
             </Card>
           </div>

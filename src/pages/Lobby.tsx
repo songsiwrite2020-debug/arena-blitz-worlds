@@ -112,9 +112,10 @@ export default function Lobby() {
     const mapId  = CHAR_MAP[privateCode[0]]  ?? room;
     const modeId = CHAR_MODE[privateCode[1]] ?? mode;
     const roomId = privateCode.slice(2);
-    const url = `${window.location.origin}/play/${mapId}?mode=${modeId}&agent=${agentId}&room=${roomId}`;
+    const gameUrl = `/play/${mapId}?mode=${modeId}&agent=${agentId}&room=${roomId}`;
+    const url = `${window.location.origin}/auth?next=${encodeURIComponent(gameUrl)}`;
     navigator.clipboard.writeText(url);
-    toast.success("Invite link copied!");
+    toast.success("Invite link copied! Friend clicks it, picks a name, joins your room.");
   };
 
   // Works for both host (passes privateCode) and joiner (passes their typed input).
