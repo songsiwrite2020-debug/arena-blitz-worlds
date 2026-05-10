@@ -37,8 +37,8 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
       return;
     }
 
-    // Smooth position & rotation
-    const t = Math.min(1, delta * 12);
+    // Smooth position & rotation — faster lerp so movement is visible even at lower update rates
+    const t = Math.min(1, delta * 20);
     group.current.position.x += (tx - group.current.position.x) * t;
     group.current.position.y += (ty - group.current.position.y) * t;
     group.current.position.z += (tz - group.current.position.z) * t;

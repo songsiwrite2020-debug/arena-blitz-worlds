@@ -108,20 +108,24 @@ export default function Game() {
   useEffect(() => { meRef.current.hp = hp; }, [hp]);
   useEffect(() => { killsRef.current = kills; }, [kills]);
 
-  // Re-broadcast HP/kills via presence whenever they change so other players see updates immediately
+  // Periodic presence track: updates position + metadata for late joiners and as broadcast fallback.
+  // 200ms is well under Supabase's throttle limit so most updates go through.
   useEffect(() => {
-    if (!channelRef.current || !username) return;
-    channelRef.current.track({
-      username,
-      pos: meRef.current.pos,
-      rotY: meRef.current.rotY,
-      hp,
-      kills,
-      walking: meRef.current.walking,
-      team: teamRef.current,
-      agent: agentId,
-    });
-  }, [hp, kills, username, agentId]);
+    if (!username) return;
+    const i = setInterval(() => {
+      channelRef.current?.track({
+        username,
+        pos: meRef.current.pos,
+        rotY: meRef.current.rotY,
+        hp: meRef.current.hp,
+        kills: killsRef.current,
+        walking: meRef.current.walking,
+        team: teamRef.current,
+        agent: agentId,
+      });
+    }, 200);
+    return () => clearInterval(i);
+  }, [username, agentId]);
 
   // Determine spawn from team if map has spawns
   const spawnPos = useMemo<[number, number, number]>(() => {
@@ -292,13 +296,11 @@ export default function Game() {
         if (!m) continue;
         sb[id] = { username: m.username, kills: m.kills ?? 0, team: m.team, agent: m.agent };
         if (id === clientId) continue;
-        // Preserve broadcast-updated position if we already have one — presence is throttled/stale
-        const existing = remotesRef.current[id];
         next[id] = {
           id,
           username: m.username,
-          pos: existing?.pos ?? m.pos ?? [0,1.7,0],
-          rotY: existing?.rotY ?? m.rotY ?? 0,
+          pos: m.pos ?? [0,1.7,0],
+          rotY: m.rotY ?? 0,
           hp: m.hp ?? 100,
           walking: m.walking,
           team: m.team,
@@ -490,16 +492,13 @@ export default function Game() {
     meRef.current.pos = pos;
     meRef.current.rotY = rotY;
     meRef.current.walking = walking;
-    channelRef.current?.track({
-      username, pos, rotY, hp: meRef.current.hp, kills: killsRef.current,
-      walking, team: teamRef.current, agent: agent.id,
-    });
+    // Broadcast is fast (no throttle) — primary source of movement for others
     channelRef.current?.send({
       type: "broadcast",
       event: "pos",
       payload: { id: clientId, pos, rotY },
     });
-  }, [username, agent.id, clientId]);
+  }, [clientId]);
 
   const isBlockedBySmokeOrWall = useCallback((origin: THREE.Vector3, end: THREE.Vector3) => {
     const ray = new THREE.Ray(origin, end.clone().sub(origin).normalize());
