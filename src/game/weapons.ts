@@ -1,5 +1,5 @@
 export type WeaponCategory = "sidearm" | "smg" | "rifle" | "sniper" | "heavy" | "melee";
-export type WeaponId = "pistol" | "ghost" | "sherif" | "smg" | "spectre" | "vandal" | "phantom" | "bucky" | "odin" | "marshal" | "sniper" | "knife";
+export type WeaponId = "pistol" | "ghost" | "sherif" | "smg" | "spectre" | "vandal" | "phantom" | "bucky" | "odin" | "marshal" | "sniper" | "knife" | "blade";
 
 export interface Weapon {
   id: WeaponId;
@@ -37,9 +37,10 @@ export const WEAPONS: Record<WeaponId, Weapon> = {
   sniper:  { id: "sniper",  name: "RAIL-X",     category: "sniper",  price: 1700, killReward: 300, damage: 95, fireRateMs: 1100, spread: 0.001, range: 200, ammo: 5,  reloadMs: 2200, color: "#ff44aa", zoom: 35 },
   // Melee
   knife:   { id: "knife",   name: "VOID-EDGE",  category: "melee",   price: 0,    killReward: 200, damage: 55, fireRateMs: 500,  spread: 0,     range: 2.5, ammo: 1,  reloadMs: 0,    color: "#00ffcc", melee: true },
+  blade:   { id: "blade",   name: "NEON-BLADE", category: "melee",   price: 300,  killReward: 200, damage: 80, fireRateMs: 700,  spread: 0,     range: 3.5, ammo: 1,  reloadMs: 0,    color: "#ff44aa", melee: true },
 };
 
-export const WEAPON_ORDER: WeaponId[] = ["pistol", "ghost", "sherif", "smg", "spectre", "phantom", "vandal", "bucky", "odin", "marshal", "sniper", "knife"];
+export const WEAPON_ORDER: WeaponId[] = ["pistol", "ghost", "sherif", "smg", "spectre", "phantom", "vandal", "bucky", "odin", "marshal", "sniper", "knife", "blade"];
 
 export const WEAPON_CATEGORIES: { id: WeaponCategory; label: string; color: string }[] = [
   { id: "sidearm", label: "SIDEARMS", color: "#7df9ff" },
