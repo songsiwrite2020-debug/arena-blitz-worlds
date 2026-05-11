@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Arena, MAPS, useArenaObstacles } from "@/game/Arena";
 import { Player } from "@/game/Player";
 import { RemotePlayer, RemotePlayerData } from "@/game/RemotePlayer";
+import { BotController, BotEntry } from "@/game/BotController";
 import { Tracers, TracerData } from "@/game/Tracers";
 import { Viewmodel } from "@/game/Viewmodel";
 import { WEAPONS, WEAPON_ORDER, WeaponId, WEAPON_CATEGORIES } from "@/game/weapons";
@@ -52,6 +53,8 @@ export default function Game() {
   const agent = AGENTS[agentId] ?? AGENTS.phantom;
   const mode = searchParams.get("mode") ?? "ffa"; // ffa | 1v1 | 3v3 | 5v5
   const roomCode = searchParams.get("room"); // null = public channel; set = private room
+  const botCount = Math.min(parseInt(searchParams.get("bots") ?? "0", 10) || 0, 5);
+  const offline  = botCount > 0;
   // Per-tab random ID so two tabs with the same account can still see each other
   const [clientId] = useState(() => Math.random().toString(36).slice(2, 10));
 
@@ -101,6 +104,29 @@ export default function Game() {
   const remotesRef = useRef<Record<string, RemotePlayerData & { walking?: boolean; team?: Team; agent?: string }>>({});
   // Positions updated directly from broadcast — no React re-render needed, RemotePlayer reads this ref each frame
   const remotePosRef = useRef<Record<string, { pos: [number, number, number]; rotY: number }>>({});
+
+  // Bot state (offline mode)
+  const BOT_NAMES = ["NEXUS-7", "VIPER-X", "CIPHER-9", "RAZE-4", "GHOST-2"];
+  const botsRef = useRef<BotEntry[]>(
+    Array.from({ length: botCount }, (_, i) => {
+      const angle = (i / botCount) * Math.PI * 2;
+      const r = 8 + i * 2;
+      return {
+        id: `bot-${i}`,
+        username: BOT_NAMES[i] ?? `BOT-${i}`,
+        pos: [Math.cos(angle) * r, 1.7, Math.sin(angle) * r] as [number,number,number],
+        rotY: 0,
+        hp: 100,
+        dead: false,
+      };
+    })
+  );
+  const botPosRef = useRef<Record<string, { pos: [number,number,number]; rotY: number }>>(
+    Object.fromEntries(botsRef.current.map(b => [b.id, { pos: b.pos, rotY: b.rotY }]))
+  );
+  const [botMeta, setBotMeta] = useState<Record<string, { hp: number; username: string }>>(
+    Object.fromEntries(botsRef.current.map(b => [b.id, { hp: b.hp, username: b.username }]))
+  );
   const killsRef = useRef(0);
   const reloadTimer = useRef<number | null>(null);
   const teamRef = useRef<Team>(team);
@@ -141,6 +167,9 @@ export default function Game() {
 
   // Keep meRef in sync with spawn so the initial presence track has the right position
   useEffect(() => { meRef.current.pos = spawnPos; }, [spawnPos]);
+
+  // Offline mode — mark as "connected" immediately (no Supabase needed)
+  useEffect(() => { if (offline) setConnected(true); }, [offline]);
 
 
   // Match timer
@@ -280,9 +309,9 @@ export default function Game() {
     addFeed(`✨ ${username} used ${ab.name}`);
   }, [alive, agent, qCdEnd, eCdEnd, user, username, addFeed]);
 
-  // Realtime
+  // Realtime (skipped in offline / bot mode)
   useEffect(() => {
-    if (!user || !username) return;
+    if (offline || !user || !username) return;
 
     const ch = supabase.channel(roomCode ? `game:${mapId}:${mode}:${roomCode}` : `game:${mapId}:${mode}`, {
       config: { presence: { key: clientId }, broadcast: { self: false } },
@@ -527,6 +556,32 @@ export default function Game() {
     return false;
   }, [effects]);
 
+  // Called by BotController when a bot fires at the player
+  const onBotShoot = useCallback((dmg: number, origin: [number,number,number], end: [number,number,number]) => {
+    if (!alive) return;
+    setTracers(arr => [...arr, { id: Math.random().toString(36), origin, end, startTime: performance.now() }]);
+    sfx.shot("pistol");
+    let rem = dmg;
+    setShield(s => { const absorb = Math.min(s, rem); rem -= absorb; return s - absorb; });
+    setHp(h => {
+      const newHp = Math.max(0, h - rem);
+      meRef.current.hp = newHp;
+      if (newHp === 0) {
+        setDeaths(d => d + 1);
+        addFeed("💀 BOT eliminated YOU");
+        document.exitPointerLock?.();
+        setTimeout(() => {
+          setHp(100); setShield(50); meRef.current.hp = 100;
+          setRespawnTick(t => t + 1);
+          toast.success("Respawned!");
+        }, 2500);
+      }
+      return newHp;
+    });
+    sfx.hurt();
+    if (meRef.current.hp > 0) toast.error(`-${dmg} HP (BOT)`, { duration: 700 });
+  }, [alive, addFeed]);
+
   const onShoot = useCallback((origin: [number, number, number], dir: [number, number, number]) => {
     if (!alive || reloading || ammo <= 0) {
       if (ammo <= 0) doReload();
@@ -551,6 +606,7 @@ export default function Game() {
     let hitPoint = o.clone().add(d.clone().multiplyScalar(weapon.range));
     let hitDist = weapon.range;
     let hitPlayerId: string | null = null;
+    let hitBotId: string | null = null;
     let headshot = false;
 
     for (const b of obstacles) {
@@ -595,6 +651,18 @@ export default function Game() {
       }
     }
 
+    // Also check bots (offline mode)
+    for (const bot of botsRef.current) {
+      if (bot.dead) continue;
+      const bc = new THREE.Vector3(bot.pos[0], bot.pos[1] - 0.3, bot.pos[2]);
+      const bs = new THREE.Sphere(bc, 0.9);
+      const bp = new THREE.Vector3();
+      if (ray.intersectSphere(bs, bp)) {
+        const dist = o.distanceTo(bp);
+        if (dist < hitDist) { hitDist = dist; hitPoint = bp; hitBotId = bot.id; hitPlayerId = null; headshot = false; }
+      }
+    }
+
     // Bullet blocked by smoke?
     if (hitPlayerId && isBlockedBySmokeOrWall(o, hitPoint)) {
       hitPlayerId = null;
@@ -606,7 +674,27 @@ export default function Game() {
         id: Math.random().toString(36),
         origin, end, startTime: performance.now(),
       }]);
-      channelRef.current?.send({ type: "broadcast", event: "shot", payload: { origin, end, weapon: weaponId } });
+      if (!offline) channelRef.current?.send({ type: "broadcast", event: "shot", payload: { origin, end, weapon: weaponId } });
+    }
+
+    // Bot hit
+    if (hitBotId) {
+      const idx = botsRef.current.findIndex(b => b.id === hitBotId);
+      if (idx >= 0) {
+        const dmg = Math.round(weapon.damage * (headshot ? HEADSHOT_MULT : 1));
+        const newHp = Math.max(0, botsRef.current[idx].hp - dmg);
+        botsRef.current[idx].hp = newHp;
+        setBotMeta(prev => ({ ...prev, [hitBotId!]: { ...prev[hitBotId!], hp: newHp } }));
+        sfx.hit();
+        if (hitmarkerTimer.current) clearTimeout(hitmarkerTimer.current);
+        setHitActive(true);
+        hitmarkerTimer.current = window.setTimeout(() => setHitActive(false), 150);
+        if (newHp <= 0) {
+          setKills(k => { const nk = k + 1; killsRef.current = nk; return nk; });
+          addFeed(`☠️ YOU → ${botsRef.current[idx].username}`);
+          sfx.kill();
+        }
+      }
     }
 
     if (hitPlayerId && user && username) {
@@ -707,6 +795,24 @@ export default function Game() {
         {Object.values(remotes).map((r) => (
           <RemotePlayer key={r.id} data={{ ...r, hp: revealedIds.has(r.id) ? Math.max(r.hp, 1) : r.hp }} posRef={remotePosRef} />
         ))}
+        {offline && (
+          <>
+            <BotController
+              botsRef={botsRef}
+              botPosRef={botPosRef}
+              meRef={meRef}
+              obstacles={obstacles}
+              arenaSize={map.size}
+              onBotShoot={onBotShoot}
+            />
+            {botsRef.current.map((b) => {
+              const meta = botMeta[b.id];
+              if (!meta || b.dead) return null;
+              const data: RemotePlayerData = { id: b.id, username: meta.username, pos: b.pos, rotY: b.rotY, hp: meta.hp };
+              return <RemotePlayer key={b.id} data={data} posRef={botPosRef} />;
+            })}
+          </>
+        )}
         <Tracers tracers={tracers} onExpire={expireTracer} />
         <AbilityEffects effects={effects} onExpire={expireEffect} />
         {!zoomActive && <Viewmodel weapon={weapon} fireFlash={lastShotAt} />}

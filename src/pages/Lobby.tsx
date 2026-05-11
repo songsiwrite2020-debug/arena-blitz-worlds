@@ -35,7 +35,7 @@ const MODE_CHAR: Record<string, string> = { ffa: "F", "1v1": "D", "3v3": "T", "5
 const CHAR_MAP: Record<string, string>  = { H: "haven", A: "arena-1", B: "arena-2", C: "arena-3" };
 const CHAR_MODE: Record<string, string> = { F: "ffa", D: "1v1", T: "3v3", V: "5v5" };
 
-type PlayTab = "quick" | "private" | "find";
+type PlayTab = "quick" | "private" | "find" | "bot";
 
 export default function Lobby() {
   const { user, username, loading, signOut } = useAuth();
@@ -322,6 +322,7 @@ export default function Lobby() {
             <div className="flex gap-1 mb-5 bg-secondary/40 p-1 rounded-lg">
               {([
                 { id: "quick", label: "Quick Play", icon: <Crosshair className="w-4 h-4" /> },
+                { id: "bot", label: "vs Bot", icon: <Zap className="w-4 h-4" /> },
                 { id: "private", label: "Private Match", icon: <Lock className="w-4 h-4" /> },
                 { id: "find", label: "Find Match", icon: <Search className="w-4 h-4" /> },
               ] as { id: PlayTab; label: string; icon: ReactNode }[]).map((t) => (
@@ -349,6 +350,28 @@ export default function Lobby() {
               >
                 <Crosshair className="mr-2" /> Deploy as {agent.name}
               </Button>
+            )}
+
+            {/* ── vs Bot ── */}
+            {tab === "bot" && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground text-center">Practice offline against AI bots — no internet needed.</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[1, 2, 3].map(n => (
+                    <Button
+                      key={n}
+                      variant="outline"
+                      className="flex flex-col h-20 gap-1 border-primary/40 hover:border-primary"
+                      onClick={() => navigate(`/play/${room}?mode=ffa&agent=${agentId}&bots=${n}`)}
+                    >
+                      <Zap className="w-5 h-5 text-primary" />
+                      <span className="font-black text-lg">{n}</span>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{n === 1 ? "Bot" : "Bots"}</span>
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">Map: {MAPS.find(m => m.id === room)?.name ?? room} · Agent: {agent.name}</p>
+              </div>
             )}
 
             {/* ── Private Match ── */}
