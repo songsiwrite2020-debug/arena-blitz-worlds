@@ -99,6 +99,8 @@ export default function Game() {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const meRef = useRef({ pos: [0, 1.7, 5] as [number, number, number], rotY: 0, hp: 100, walking: false });
   const remotesRef = useRef<Record<string, RemotePlayerData & { walking?: boolean; team?: Team; agent?: string }>>({});
+  // Positions updated directly from broadcast — no React re-render needed, RemotePlayer reads this ref each frame
+  const remotePosRef = useRef<Record<string, { pos: [number, number, number]; rotY: number }>>({});
   const killsRef = useRef(0);
   const reloadTimer = useRef<number | null>(null);
   const teamRef = useRef<Team>(team);
@@ -296,6 +298,10 @@ export default function Game() {
         if (!m) continue;
         sb[id] = { username: m.username, kills: m.kills ?? 0, team: m.team, agent: m.agent };
         if (id === clientId) continue;
+        // Seed posRef only if we don't already have a fresher broadcast position
+        if (!remotePosRef.current[id]) {
+          remotePosRef.current[id] = { pos: m.pos ?? [0,1.7,0], rotY: m.rotY ?? 0 };
+        }
         next[id] = {
           id,
           username: m.username,
@@ -307,6 +313,10 @@ export default function Game() {
           agent: m.agent,
         };
       }
+      // Remove departed players from posRef
+      for (const id of Object.keys(remotePosRef.current)) {
+        if (!next[id]) delete remotePosRef.current[id];
+      }
       setRemotes(next);
       setScoreboard(sb);
     });
@@ -316,6 +326,7 @@ export default function Game() {
       const p = (newPresences as Array<{ username?: string; pos?: [number,number,number]; rotY?: number; hp?: number; walking?: boolean; team?: Team; agent?: string }>)[0];
       if (p?.username) {
         toast.success(`${p.username} joined the game`);
+        remotePosRef.current[key] = { pos: p.pos ?? [0,1.7,0], rotY: p.rotY ?? 0 };
         setRemotes((prev) => ({
           ...prev,
           [key]: { id: key, username: p.username!, pos: p.pos ?? [0,1.7,0], rotY: p.rotY ?? 0, hp: p.hp ?? 100, walking: p.walking, team: p.team, agent: p.agent },
@@ -411,14 +422,12 @@ export default function Game() {
 
     ch.on("broadcast", { event: "pos" }, ({ payload }) => {
       if (payload.id === clientId) return;
-      // Update ref immediately so onShoot hit-detection uses fresh positions this frame
+      // Write directly to refs — no React re-render, RemotePlayer reads posRef each frame
+      remotePosRef.current[payload.id] = { pos: payload.pos, rotY: payload.rotY };
       if (remotesRef.current[payload.id]) {
-        remotesRef.current[payload.id] = { ...remotesRef.current[payload.id], pos: payload.pos, rotY: payload.rotY };
+        remotesRef.current[payload.id].pos = payload.pos;
+        remotesRef.current[payload.id].rotY = payload.rotY;
       }
-      setRemotes((prev) => {
-        if (!prev[payload.id]) return prev;
-        return { ...prev, [payload.id]: { ...prev[payload.id], pos: payload.pos, rotY: payload.rotY } };
-      });
     });
 
     intentionalCloseRef.current = false;
@@ -696,7 +705,7 @@ export default function Game() {
           dashTrigger={dashTrigger}
         />
         {Object.values(remotes).map((r) => (
-          <RemotePlayer key={r.id} data={{ ...r, hp: revealedIds.has(r.id) ? Math.max(r.hp, 1) : r.hp }} />
+          <RemotePlayer key={r.id} data={{ ...r, hp: revealedIds.has(r.id) ? Math.max(r.hp, 1) : r.hp }} posRef={remotePosRef} />
         ))}
         <Tracers tracers={tracers} onExpire={expireTracer} />
         <AbilityEffects effects={effects} onExpire={expireEffect} />

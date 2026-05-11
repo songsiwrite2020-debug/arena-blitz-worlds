@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -14,7 +14,12 @@ export interface RemotePlayerData {
 const BASE  = "#0d1520";
 const PLATE = "#162232";
 
-export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
+interface Props {
+  data: RemotePlayerData;
+  posRef: MutableRefObject<Record<string, { pos: [number, number, number]; rotY: number }>>;
+}
+
+export const RemotePlayer = ({ data, posRef }: Props) => {
   const group     = useRef<THREE.Group>(null);
   const bodyGroup = useRef<THREE.Group>(null);
   const leftHip   = useRef<THREE.Group>(null);
@@ -25,24 +30,31 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
 
   useFrame((_, delta) => {
     if (!group.current) return;
-    const tx = data.pos[0];
-    const ty = data.pos[1] - 1.7;
-    const tz = data.pos[2];
+
+    // Read from posRef first (updated by broadcast every 50ms, no React re-render needed)
+    // Fall back to data.pos (from presence sync) if no broadcast has arrived yet
+    const live = posRef.current[data.id];
+    const srcPos = live?.pos ?? data.pos;
+    const srcRotY = live?.rotY ?? data.rotY;
+
+    const tx = srcPos[0];
+    const ty = srcPos[1] - 1.7;
+    const tz = srcPos[2];
 
     if (!snapped.current) {
       group.current.position.set(tx, ty, tz);
-      group.current.rotation.y = data.rotY;
+      group.current.rotation.y = srcRotY;
       prevPos.current.set(tx, ty, tz);
       snapped.current = true;
       return;
     }
 
-    // Smooth position & rotation — faster lerp so movement is visible even at lower update rates
+    // Smooth interpolation — fast enough to look real-time at 20fps updates
     const t = Math.min(1, delta * 20);
     group.current.position.x += (tx - group.current.position.x) * t;
     group.current.position.y += (ty - group.current.position.y) * t;
     group.current.position.z += (tz - group.current.position.z) * t;
-    group.current.rotation.y += (data.rotY - group.current.rotation.y) * t;
+    group.current.rotation.y += (srcRotY - group.current.rotation.y) * t;
 
     // Velocity-based walk animation
     const speed = group.current.position.distanceTo(prevPos.current) / Math.max(delta, 0.001);
@@ -52,14 +64,13 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
     if (moving) {
       walkTime.current += delta * Math.max(speed * 1.2, 5);
     } else {
-      walkTime.current *= 0.8; // ease to zero
+      walkTime.current *= 0.8;
     }
 
     const swing = Math.sin(walkTime.current) * 0.6;
     if (leftHip.current)  leftHip.current.rotation.x  =  swing;
     if (rightHip.current) rightHip.current.rotation.x = -swing;
 
-    // Subtle body bob
     if (bodyGroup.current) {
       bodyGroup.current.position.y = moving
         ? Math.abs(Math.sin(walkTime.current * 2)) * 0.05
@@ -78,7 +89,6 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.17, 1.1, 0.24]} />
           <meshStandardMaterial color={BASE} metalness={0.7} roughness={0.28} />
         </mesh>
-        {/* Knee plate */}
         <mesh position={[0, -0.76, 0.14]}>
           <boxGeometry args={[0.14, 0.12, 0.06]} />
           <meshStandardMaterial color={PLATE} metalness={0.85} roughness={0.18} />
@@ -91,21 +101,18 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.17, 1.1, 0.24]} />
           <meshStandardMaterial color={BASE} metalness={0.7} roughness={0.28} />
         </mesh>
-        {/* Knee plate */}
         <mesh position={[0, -0.76, 0.14]}>
           <boxGeometry args={[0.14, 0.12, 0.06]} />
           <meshStandardMaterial color={PLATE} metalness={0.85} roughness={0.18} />
         </mesh>
       </group>
 
-      {/* Upper body — bobs when walking */}
+      {/* Upper body */}
       <group ref={bodyGroup}>
-        {/* Torso */}
         <mesh position={[0, 1.2, 0]} castShadow>
           <boxGeometry args={[0.5, 0.68, 0.3]} />
           <meshStandardMaterial color={BASE} metalness={0.7} roughness={0.28} />
         </mesh>
-        {/* Chest plate */}
         <mesh position={[0, 1.2, 0.16]}>
           <boxGeometry args={[0.44, 0.54, 0.07]} />
           <meshStandardMaterial color={PLATE} emissive={color} emissiveIntensity={0.12} metalness={0.88} roughness={0.14} />
@@ -118,7 +125,6 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.38, 0.02, 0.01]} />
           <meshBasicMaterial color={color} />
         </mesh>
-        {/* Shoulder pads */}
         <mesh position={[0.37, 1.52, 0]} castShadow>
           <boxGeometry args={[0.13, 0.11, 0.32]} />
           <meshStandardMaterial color={PLATE} metalness={0.85} roughness={0.18} />
@@ -135,12 +141,10 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.135, 0.016, 0.32]} />
           <meshBasicMaterial color={color} transparent opacity={0.8} />
         </mesh>
-        {/* Neck */}
         <mesh position={[0, 1.64, 0]}>
           <cylinderGeometry args={[0.09, 0.1, 0.14, 8]} />
           <meshStandardMaterial color={BASE} metalness={0.72} roughness={0.3} />
         </mesh>
-        {/* Helmet */}
         <mesh position={[0, 1.89, 0]} castShadow>
           <boxGeometry args={[0.33, 0.33, 0.32]} />
           <meshStandardMaterial color={PLATE} metalness={0.78} roughness={0.2} />
@@ -149,18 +153,15 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.08, 0.04, 0.28]} />
           <meshStandardMaterial color={PLATE} metalness={0.85} roughness={0.15} />
         </mesh>
-        {/* Visor */}
         <mesh position={[0, 1.9, 0.17]}>
           <boxGeometry args={[0.27, 0.09, 0.025]} />
           <meshBasicMaterial color={color} transparent opacity={0.88} />
         </mesh>
         <pointLight position={[0, 1.9, 0.28]} color={color} intensity={1.0} distance={1.8} decay={2} />
-        {/* Backpack */}
         <mesh position={[0, 1.18, -0.2]}>
           <boxGeometry args={[0.34, 0.42, 0.12]} />
           <meshStandardMaterial color={BASE} metalness={0.65} roughness={0.35} />
         </mesh>
-        {/* Weapon */}
         <mesh position={[0.24, 1.22, -0.38]} castShadow>
           <boxGeometry args={[0.08, 0.09, 0.54]} />
           <meshStandardMaterial color="#151820" metalness={0.88} roughness={0.18} />
@@ -173,7 +174,6 @@ export const RemotePlayer = ({ data }: { data: RemotePlayerData }) => {
           <boxGeometry args={[0.006, 0.065, 0.44]} />
           <meshBasicMaterial color={color} transparent opacity={0.7} />
         </mesh>
-        {/* Name + HP */}
         <Text position={[0, 2.52, 0]} fontSize={0.24} color="white" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="black">
           {data.username}
         </Text>
